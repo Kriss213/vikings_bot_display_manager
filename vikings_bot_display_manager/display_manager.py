@@ -9,6 +9,7 @@ import time
 from vikings_bot_interfaces.msg import Ping
 from vikings_bot_firmware_py.mqtt_msgs import PingMqtt
 
+import os
 import threading
 import psutil
 import subprocess
@@ -108,12 +109,18 @@ class DisplayManager(Node):
         self.__BAUD = 9600
 
         self.__serial = None
+
+        # thread to process incoming messages
+        self.__rx_thread = threading.Thread(target=self.read_serial)
+        self.__rx_thread.daemon = True
+
         while self.__serial == None:
             try:
                 self.__serial = serial.Serial(
                     port=self.__PORT,
                     baudrate=self.__BAUD
                 )
+                self.__rx_thread.start()
                 self.get_logger().info("Serial initialized")
             except:
                 self.get_logger().warn(f"Failed to connect serial. Retrying...", once=True)
@@ -170,6 +177,21 @@ class DisplayManager(Node):
     def __del__(self):
         # close serial communication
         self.__serial.close()
+
+    def read_serial(self):
+        while True:
+            if self.__serial.is_open:
+                try:
+                    data = self.__serial.readline()
+                    if "SHTDWN" in str(data):
+                        self.get_logger().info(f"SHUTDOWN REQUEST RECIEVED FROM DISPLAY. Sending shutdown signal to host...")
+                        msg = String()
+                        msg.data = "Shutting down computer..."
+                        self.__display_log_clb(msg)
+                        os.system('touch /tmp/shutdown_signal')
+                    
+                except serial.SerialException:
+                    self.get_logger().error('Failed to read from serial port')
 
     @property
     def internal_status(self):
