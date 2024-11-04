@@ -115,16 +115,7 @@ class DisplayManager(Node):
         self.__rx_thread.daemon = True
 
         while self.__serial == None:
-            try:
-                self.__serial = serial.Serial(
-                    port=self.__PORT,
-                    baudrate=self.__BAUD
-                )
-                self.__rx_thread.start()
-                self.get_logger().info("Serial initialized")
-            except:
-                self.get_logger().warn(f"Failed to connect serial. Retrying...", once=True)
-                time.sleep(1)
+            self.connect_serial()
 
         self.__network_monitor = NetworkMonitor(interface=self.__net_interface, logger=self.get_logger())
         
@@ -178,6 +169,21 @@ class DisplayManager(Node):
         # close serial communication
         self.__serial.close()
 
+    def connect_serial(self):
+        """
+        Connect serial device.
+        """
+        try:
+            self.__serial = serial.Serial(
+                port=self.__PORT,
+                baudrate=self.__BAUD
+            )
+            self.__rx_thread.start()
+            self.get_logger().info("Serial initialized")
+        except:
+            self.get_logger().warn(f"Failed to connect serial. Retrying...", once=True)
+            time.sleep(1)
+        
     def read_serial(self):
         while True:
             if self.__serial.is_open:
@@ -192,6 +198,9 @@ class DisplayManager(Node):
                     
                 except serial.SerialException:
                     self.get_logger().error('Failed to read from serial port')
+            else:
+                # reconnect to serial
+                self.connect_serial()
 
     @property
     def internal_status(self):
@@ -292,10 +301,13 @@ class DisplayManager(Node):
         """
         instruction = str.encode(command)
         try:
-            self.__serial.write(instruction + self.__terminator)
-            return True
+            if self.__serial.is_open:
+                self.__serial.write(instruction + self.__terminator)
+                return True
+            else:
+                self.connect_serial()
         except Exception as e:
-            self.get_logger(f"Failed to send command: {e}")
+            self.get_logger().error(f"Failed to send command: {e}")
         return False
     
     def __current_clb(self, msg:Int32) -> None:
@@ -357,7 +369,8 @@ class DisplayManager(Node):
         ]
 
         for instruction in self.__instruction_buffer:
-          self.__send_command(instruction)
+          while not self.__send_command(instruction):
+              pass # loop until command is sent successfully
         self.__instruction_buffer = []
 
 
