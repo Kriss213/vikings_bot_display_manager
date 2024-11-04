@@ -108,6 +108,13 @@ class DisplayManager(Node):
         self.__PORT = "/dev/ttyDISPLAY"
         self.__BAUD = 9600
 
+        # a flag to keep from spamming errors
+        # using this instead of ..once=True to log once on every disconnect
+        self.__error_logged = {
+            'error': False,
+            'retry': False
+        }
+
         self.__serial = None
 
         # thread to process incoming messages
@@ -115,16 +122,8 @@ class DisplayManager(Node):
         self.__rx_thread.daemon = True
 
         while self.__serial == None:
-            try:
-                self.__serial = serial.Serial(
-                    port=self.__PORT,
-                    baudrate=self.__BAUD
-                )
-                self.__rx_thread.start()
-                self.get_logger().info("Serial initialized")
-            except:
-                self.get_logger().warn(f"Failed to connect serial. Retrying...", once=True)
-                time.sleep(1)
+            self.connect_serial()
+        self.__rx_thread.start()
 
         self.__network_monitor = NetworkMonitor(interface=self.__net_interface, logger=self.get_logger())
         
@@ -178,20 +177,48 @@ class DisplayManager(Node):
         # close serial communication
         self.__serial.close()
 
+    def connect_serial(self):
+        """
+        Connect serial device.
+        """
+        try:
+            self.__serial = serial.Serial(
+                port=self.__PORT,
+                baudrate=self.__BAUD
+            )
+            self.__error_logged['error'] = False
+            self.__error_logged['retry'] = False
+            self.get_logger().info("Serial initialized")
+        except:
+            if not self.__error_logged['retry']:
+                self.get_logger().warn(f"Failed to connect serial. Retrying...")
+                self.__error_logged['retry'] = True
+            time.sleep(1)
+
+    def handle_error(self, err):
+        """
+        Handle read/write errors
+        """
+        if not self.__error_logged['error']:
+            self.get_logger().error(f"Failed a read/write operation: {err}")
+            self.__error_logged['error'] = True
+
+        self.__serial.close()
+        self.connect_serial()
+        
     def read_serial(self):
         while True:
-            if self.__serial.is_open:
-                try:
-                    data = self.__serial.readline()
-                    if "SHTDWN" in str(data):
-                        self.get_logger().info(f"SHUTDOWN REQUEST RECIEVED FROM DISPLAY. Sending shutdown signal to host...")
-                        msg = String()
-                        msg.data = "Shutting down computer..."
-                        self.__display_log_clb(msg)
-                        os.system('touch /tmp/shutdown_signal')
-                    
-                except serial.SerialException:
-                    self.get_logger().error('Failed to read from serial port')
+            try:
+                data = self.__serial.readline()
+                if "SHTDWN" in str(data):
+                    self.get_logger().info(f"SHUTDOWN REQUEST RECIEVED FROM DISPLAY. Sending shutdown signal to host...")
+                    msg = String()
+                    msg.data = "Shutting down computer..."
+                    self.__display_log_clb(msg)
+                    os.system('touch /tmp/shutdown_signal')
+                
+            except serial.SerialException as e:
+                self.handle_error(e)
 
     @property
     def internal_status(self):
@@ -295,7 +322,7 @@ class DisplayManager(Node):
             self.__serial.write(instruction + self.__terminator)
             return True
         except Exception as e:
-            self.get_logger(f"Failed to send command: {e}")
+            self.handle_error(e)
         return False
     
     def __current_clb(self, msg:Int32) -> None:
@@ -357,7 +384,8 @@ class DisplayManager(Node):
         ]
 
         for instruction in self.__instruction_buffer:
-          self.__send_command(instruction)
+          while not self.__send_command(instruction):
+              pass # loop until command is sent successfully
         self.__instruction_buffer = []
 
 
