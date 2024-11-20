@@ -9,6 +9,18 @@ This ROS2 package updates Vikings Bot display with:
 * estimated charge time
 * log
 
+## Setup
+
+### Install ROS2 dependencies
+```
+rosdep install -y --from-paths src --ignore-src
+```
+
+### Build package
+```
+. /opt/ros/humble/setup.bash && colcon build --packages-select vikings_bot_display_manager
+```
+
 ## Launch
 ```
 ros2 launch vikings_bot_display_manager display_manager.launch.py
